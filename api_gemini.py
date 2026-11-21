@@ -2,15 +2,14 @@ import base64
 import json
 import os
 
-import fitz                      # PyMuPDF (only needed if PDF_DIRECT is off)
+import pymupdf                   # PyMuPDF (only needed if PDF_DIRECT is off)
 import requests
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 
 # ---------------- Configuration (environment variables) ----------------
 API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    raise RuntimeError("Set GEMINI_API_KEY before starting this API.")
+# Do not crash at startup: /health will report whether the key is configured.
 
 # Try these stable, free-tier models in order. Avoid preview/exp models.
 MODELS = [m.strip() for m in os.getenv(
@@ -72,9 +71,9 @@ No markdown, no explanation — only JSON."""
 # ---------------- Helpers ----------------
 def render_pdf(data: bytes):
     """Rasterize the first MAX_PAGES pages of a PDF into PNG bytes."""
-    doc = fitz.open(stream=data, filetype="pdf")
+    doc = pymupdf.open(stream=data, filetype="pdf")
     return [
-        p.get_pixmap(matrix=fitz.Matrix(ZOOM, ZOOM)).tobytes("png")
+        p.get_pixmap(matrix=pymupdf.Matrix(ZOOM, ZOOM)).tobytes("png")
         for p in list(doc)[:MAX_PAGES]
     ]
 
@@ -90,6 +89,11 @@ def parse_model_json(text: str):
 
 def ask_gemini(parts):
     """Try each configured Gemini model until one returns valid JSON."""
+    if not API_KEY:
+        raise RuntimeError(
+            "GEMINI_API_KEY is not set on the server. "
+            "Add it in Railway Variables and redeploy."
+        )
     last_error = None
     for model in MODELS:
         try:
@@ -121,7 +125,12 @@ def ask_gemini(parts):
 # ---------------- Endpoints ----------------
 @app.get("/health")
 def health():
-    return {"ok": True, "provider": "gemini", "models": MODELS}
+    return {
+        "ok": True,
+        "provider": "gemini",
+        "models": MODELS,
+        "key_configured": bool(API_KEY),
+    }
 
 
 @app.post("/api/extract")
